@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chirp — clone do Twitter</title>
+<style>
+:root{--bg:#fff;--fg:#0f1419;--mut:#6b7780;--br:#e1e8ed;--ac:#1d9bf0}
+@media(prefers-color-scheme:dark){:root{--bg:#15202b;--fg:#e7e9ea;--mut:#8b98a5;--br:#38444d}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+#app{max-width:620px;margin:0 auto;min-height:100vh;border-inline:1px solid var(--br)}
+header{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--br);position:sticky;top:0;background:var(--bg)}
+header h1{font-size:20px;margin:0;flex:1}
+button{cursor:pointer;border:1px solid var(--br);background:transparent;color:var(--fg);border-radius:999px;padding:6px 14px;font:inherit}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}button.on{border-color:var(--ac);color:var(--ac)}
+input,textarea{width:100%;padding:10px;border:1px solid var(--br);border-radius:8px;background:transparent;color:var(--fg);font:inherit;margin:4px 0}
+.box{padding:16px;border-bottom:1px solid var(--br)}.post{padding:12px 16px;border-bottom:1px solid var(--br)}
+.row{display:flex;gap:10px}.grow{flex:1;min-width:0}.muted{color:var(--mut);font-size:14px}
+.av{width:40px;height:40px;border-radius:50%;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;object-fit:cover;flex:none;font-weight:700}
+.acts{display:flex;gap:6px;flex-wrap:wrap}.acts button{border:none;padding:4px 8px;color:var(--mut)}
+.err{color:#f4212e;font-size:14px}p{margin:4px 0;white-space:pre-wrap;word-break:break-word}
+.cm{margin-top:8px;padding-left:8px;border-left:2px solid var(--br)}
+</style></head><body><div id="app"></div>
+<script>
+const API='/api';let tok=localStorage.getItem('access'),me=null,view='feed';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,o={}){
+  const h={...(o.headers||{})};if(tok)h.Authorization='Bearer '+tok;
+  if(o.body&&!(o.body instanceof FormData)){h['Content-Type']='application/json';o.body=JSON.stringify(o.body)}
+  const r=await fetch(API+path,{...o,headers:h});
+  const d=r.status===204?null:await r.json().catch(()=>null);
+  if(!r.ok)throw d||{detail:'Erro '+r.status};return d}
+const errText=e=>Object.values(e).flat().map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' ');
+const av=u=>u.avatar?`<img class=av src="${esc(u.avatar)}">`:`<div class=av>${esc(u.username[0].toUpperCase())}</div>`;
+
+function authView(msg=''){ $('app').innerHTML=`<header><h1>🐦 Chirp</h1></header><div class=box>
+ <input id=u placeholder="Usuário"><input id=n placeholder="Nome (só no cadastro)"><input id=p type=password placeholder="Senha">
+ <div class=err id=er>${esc(msg)}</div><button class=p onclick=login()>Entrar</button> <button onclick=register()>Criar conta</button></div>`}
+async function login(){try{const d=await api('/auth/login/',{method:'POST',body:{username:$('u').value,password:$('p').value}});
+ tok=d.access;localStorage.setItem('access',tok);await start()}catch(e){$('er').textContent=errText(e)}}
+async function register(){try{await api('/auth/register/',{method:'POST',body:{username:$('u').value,name:$('n').value,password:$('p').value}});await login()}catch(e){$('er').textContent=errText(e)}}
+function logout(){localStorage.removeItem('access');tok=null;me=null;authView()}
+async function start(){try{me=await api('/profile/');show('feed')}catch{logout()}}
+
+function postHtml(p){const s=p.repost_of||p;
+ const rt=p.repost_of?`<div class=muted>🔁 ${esc(p.author.name||p.author.username)} repostou</div>`:'';
+ return `<div class=post>${rt}<div class=row>${av(s.author)}<div class=grow><b>${esc(s.author.name||s.author.username)}</b> <span class=muted>@${esc(s.author.username)}</span>
+ <p>${esc(s.content)}</p><div class=acts>
+ <button onclick="like(${s.id},${s.liked_by_me})">${s.liked_by_me?'❤️':'🤍'} ${s.likes_count}</button>
+ <button onclick="repost(${s.id})">🔁 ${s.reposts_count}</button>
+ <button onclick="toggleC(${s.id})">💬 ${s.comments_count}</button>
+ ${p.author.id===me.id?`<button onclick="delPost(${p.id})">🗑</button>`:''}</div><div class=cm id="c${s.id}" hidden></div></div></div></div>`}
+const userHtml=u=>`<div class=post><div class=row>${av(u)}<div class=grow><b>${esc(u.name||u.username)}</b> <span class=muted>@${esc(u.username)} · ${u.followers_count} seguidores</span></div>
+ <button class="${u.is_following?'on':''}" onclick="follow('${esc(u.username)}',${u.is_following})">${u.is_following?'Seguindo':'Seguir'}</button></div></div>`;
+
+async function show(v){view=v;const nav=`<header><h1>🐦 Chirp</h1>
+ <button onclick="show('feed')">Feed</button><button onclick="show('explore')">Explorar</button><button onclick="show('profile')">Perfil</button><button onclick="logout()">Sair</button></header>`;
+ let body='';
+ if(v==='feed'||v==='explore'){
+  body=`<div class=box><textarea id=t maxlength=280 rows=2 placeholder="O que está acontecendo?"></textarea><button class=p onclick=tweet()>Postar</button></div>`;
+  const posts=(await api(v==='feed'?'/feed/':'/posts/')).results;
+  if(v==='explore'){const us=(await api('/users/')).results;body+=`<div class=box><b>Pessoas</b></div>`+us.map(userHtml).join('')+`<div class=box><b>Todas as postagens</b></div>`}
+  else if(!posts.length)body+=`<div class=box muted>Seu feed mostra apenas quem você segue. Vá em Explorar e siga alguém!</div>`;
+  body+=posts.map(postHtml).join('')}
+ else{const [fr,fg]=await Promise.all([api(`/users/${me.username}/followers/`),api(`/users/${me.username}/following/`)]);
+  body=`<div class=box><div class=row>${av(me)}<div><b>${esc(me.name||me.username)}</b><div class=muted>@${esc(me.username)} · ${fr.count} seguidores · ${fg.count} seguindo</div></div></div></div>
+  <div class=box><b>Editar perfil</b> <span class=muted>(altere só o que quiser)</span>
+  <input id=pn placeholder="Novo nome"><input id=pa type=file accept="image/*">
+  <input id=pc type=password placeholder="Senha atual (para trocar a senha)"><input id=pp type=password placeholder="Nova senha">
+  <div class=err id=pe></div><button class=p onclick=saveProfile()>Salvar</button></div>
+  <div class=box><b>Seguidores</b></div>${fr.results.map(userHtml).join('')}<div class=box><b>Seguindo</b></div>${fg.results.map(userHtml).join('')}`}
+ $('app').innerHTML=nav+body}
+
+const wrap=f=>async(...a)=>{try{await f(...a)}catch(e){alert(errText(e))}};
+const tweet=wrap(async()=>{await api('/posts/',{method:'POST',body:{content:$('t').value}});show(view)});
+const like=wrap(async(id,l)=>{await api(`/posts/${id}/like/`,{method:l?'DELETE':'POST'});show(view)});
+const repost=wrap(async id=>{await api(`/posts/${id}/repost/`,{method:'POST'});show(view)});
+const delPost=wrap(async id=>{await api(`/posts/${id}/`,{method:'DELETE'});show(view)});
+const follow=wrap(async(u,f)=>{await api(`/users/${u}/follow/`,{method:f?'DELETE':'POST'});show(view)});
+const toggleC=wrap(async id=>{const el=$('c'+id);if(!el.hidden){el.hidden=true;return}
+ const cs=(await api(`/posts/${id}/comments/`)).results;
+ el.innerHTML=cs.map(c=>`<p><b>@${esc(c.user.username)}</b> ${esc(c.content)}</p>`).join('')+`<input id="ci${id}" maxlength=280 placeholder="Comentar..."><button onclick="comment(${id})">Enviar</button>`;el.hidden=false});
+const comment=wrap(async id=>{await api(`/posts/${id}/comments/`,{method:'POST',body:{content:$('ci'+id).value}});await show(view)});
+async function saveProfile(){const fd=new FormData();
+ if($('pn').value)fd.append('name',$('pn').value);if($('pa').files[0])fd.append('avatar',$('pa').files[0]);
+ if($('pp').value){fd.append('password',$('pp').value);fd.append('current_password',$('pc').value)}
+ try{await api('/profile/',{method:'PATCH',body:fd});me=await api('/profile/');show('profile')}catch(e){$('pe').textContent=errText(e)}}
+tok?start():authView();
+</script></body></html>
